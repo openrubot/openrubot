@@ -143,3 +143,5 @@ db/memory.db
 db/*.db
 logs/
 custom/
+db/memory.db-shm
+db/memory.db-wal
