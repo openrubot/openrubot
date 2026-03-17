@@ -1,0 +1,45 @@
+{
+  "name": "openrubot",
+  "version": "1.0.0",
+  "description": "Born out of boredom. Raised to be useful.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openrubot/openrubot.git"
+  },
+  "keywords": [],
+  "author": "Rusiru",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/openrubot/openrubot/issues"
+  },
+  "homepage": "https://github.com/openrubot/openrubot#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.79.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "axios": "^1.13.6",
+    "better-sqlite3": "^12.8.0",
+    "bull": "^4.16.5",
+    "docx": "^9.6.1",
+    "dotenv": "^17.3.1",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "franc-min": "^6.2.0",
+    "googleapis": "^171.4.0",
+    "ioredis": "^5.10.0",
+    "node-cron": "^4.2.1",
+    "pdfkit": "^0.18.0",
+    "systeminformation": "^5.31.4",
+    "telegraf": "^4.16.3",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0"
+  }
+}
