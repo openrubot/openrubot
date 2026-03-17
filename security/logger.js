@@ -1,9 +1,9 @@
 const winston = require('winston');
 
 const SECRET_PATTERNS = [
-  /sk-ant-[a-zA-Z0-9-_]+/g,
-  /[0-9]{8,10}:[a-zA-Z0-9-_]{35}/g,
-  /ENCRYPTION_KEY=[a-f0-9]+/g,
+  /sk-ant-[a-zA-Z0-9-_]+/g,           // Anthropic API keys
+  /(?<=Authorization: )Bearer \S+/g,   // Bearer tokens in headers
+  /ENCRYPTION_KEY=[a-f0-9]+/g,         // Encryption key if logged
 ];
 
 function scrubSecrets(message) {
