@@ -1,11 +1,38 @@
 const { chat } = require('./claude.js');
 const { isAuthorised, isAdmin, addUser, clearHistory, getUser } = require('./memory.js');
+const { saveReminder, getUserReminders, formatReminders } = require('./tools/reminders.js');
 const logger = require('./security/logger.js');
 
 const ADMIN_ID = process.env.ADMIN_TELEGRAM_ID;
 
+// ── Parse reminder intent via Claude ─────────────────────────
+async function parseReminder(userId, text) {
+  const now = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' });
+  const prompt = `Extract reminder details from: "${text}"
+
+Current date/time in Toronto: ${now}
+
+Reply with ONLY a JSON object, no explanation, no markdown:
+{
+  "task": "what to remind about",
+  "remind_at": "ISO 8601 datetime in UTC",
+  "recurring": null
+}
+
+If no valid future date/time found, set remind_at to null.`;
+
+  try {
+    const response = await chat(userId, prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (error) {
+    logger.error(`Reminder parse failed: ${error.message}`);
+    return null;
+  }
+}
+
 // ── Slash command handler ─────────────────────────────────────
-async function handleCommand(command, userId, userName, reply) {
+async function handleCommand(command, userId, userName, text, reply) {
   switch (command) {
     case '/start':
       if (!isAuthorised(userId)) {
@@ -20,8 +47,7 @@ async function handleCommand(command, userId, userName, reply) {
         `*/help* — This list\n` +
         `*/clear* — Clear conversation history\n` +
         `*/status* — Bot status\n` +
-        `*/reminders* — View your reminders\n` +
-        `*/expenses* — Monthly expense summary\n\n` +
+        `*/reminders* — View your reminders\n\n` +
         `Or just talk naturally — I understand plain English!`
       );
 
@@ -31,32 +57,57 @@ async function handleCommand(command, userId, userName, reply) {
 
     case '/status':
       const user = getUser(userId);
-      return reply(`✅ openrubot is online\n👤 User: ${user?.name}\n🔑 Role: ${user?.role}\n🧠 Model fast: ${process.env.CLAUDE_MODEL_FAST}\n🧠 Model smart: ${process.env.CLAUDE_MODEL_SMART}`);
+      return reply(`✅ openrubot is online\n👤 User: ${user?.name}\n🔑 Role: ${user?.role}\n🧠 Fast model: ${process.env.CLAUDE_MODEL_FAST}\n🧠 Smart model: ${process.env.CLAUDE_MODEL_SMART}`);
+
+    case '/reminders':
+      const reminders = getUserReminders(userId);
+      return reply(formatReminders(reminders));
 
     case '/adduser':
       if (!isAdmin(userId)) return reply('❌ Admin only.');
-      return reply('Usage: /adduser [telegram_id] [name]');
+      const parts = text.split(' ');
+      if (parts.length < 3) return reply('Usage: /adduser [telegram_id] [name]');
+      addUser(parts[1], parts.slice(2).join(' '));
+      return reply(`✅ Added user ${parts.slice(2).join(' ')}`);
 
     default:
       return reply(`Unknown command: ${command}. Try /help`);
   }
 }
 
-// ── Main router — called by any platform adapter ──────────────
+// ── Main router ───────────────────────────────────────────────
 async function handleMessage(ctx) {
   const { userId, userName, text, reply } = ctx;
 
-  // Block unauthorised users silently except for /start
+  // Block unauthorised users silently except /start
   if (!isAuthorised(userId)) {
-    if (text === '/start') return handleCommand('/start', userId, userName, reply);
+    if (text === '/start') return handleCommand('/start', userId, userName, text, reply);
     logger.warn(`Unauthorised access attempt from ${userId}`);
     return;
   }
 
-  // Handle slash commands
+  // Slash commands
   if (text.startsWith('/')) {
     const command = text.split(' ')[0].toLowerCase();
-    return handleCommand(command, userId, userName, reply);
+    return handleCommand(command, userId, userName, text, reply);
+  }
+
+  // Detect reminder intent
+  const lower = text.toLowerCase();
+  const isReminder = lower.includes('remind') || lower.includes('reminder');
+
+  if (isReminder) {
+    const parsed = await parseReminder(userId, text);
+    if (parsed && parsed.remind_at) {
+      saveReminder(userId, parsed.task, parsed.remind_at, parsed.recurring);
+      const date = new Date(parsed.remind_at).toLocaleString('en-CA', {
+        timeZone: 'America/Toronto',
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      });
+      return reply(`✅ Reminder set!\n📝 ${parsed.task}\n📅 ${date}${parsed.recurring ? '\n🔁 ' + parsed.recurring : ''}`);
+    }
+    return reply('⚠️ I couldn\'t figure out the date/time. Try: "remind me Friday 6pm dentist"');
   }
 
   // Everything else goes to Claude
