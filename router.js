@@ -2,23 +2,27 @@ const { chat } = require('./claude.js');
 const { isAuthorised, isAdmin, addUser, clearHistory, getUser } = require('./memory.js');
 const { saveReminder, getUserReminders, formatReminders } = require('./tools/reminders.js');
 const logger = require('./security/logger.js');
+const { saveExpense, getMonthlySummary, getMonthlyTotal, formatSummary } = require('./tools/expenses.js');
 
 const ADMIN_ID = process.env.ADMIN_TELEGRAM_ID;
 
 // ── Parse reminder intent via Claude ─────────────────────────
 async function parseReminder(userId, text) {
   const now = new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' });
+  const offset = '-04:00'; // EDT — update to -05:00 in November when clocks fall back
   const prompt = `Extract reminder details from: "${text}"
 
-Current date/time in Toronto: ${now}
+Current date/time in Toronto: ${now} (Eastern Daylight Time, UTC-4)
+The user is in Toronto, Canada. All times they mention are Toronto local time (EDT, UTC-4).
 
 Reply with ONLY a JSON object, no explanation, no markdown:
 {
   "task": "what to remind about",
-  "remind_at": "ISO 8601 datetime in UTC",
+  "remind_at": "ISO 8601 datetime in UTC, converted from Toronto EDT (UTC-4)",
   "recurring": null
 }
 
+Example: if user says 5:00 PM Toronto time, remind_at should be the equivalent UTC time.
 If no valid future date/time found, set remind_at to null.`;
 
   try {
@@ -27,6 +31,31 @@ If no valid future date/time found, set remind_at to null.`;
     return JSON.parse(clean);
   } catch (error) {
     logger.error(`Reminder parse failed: ${error.message}`);
+    return null;
+  }
+}
+
+// ── Parse expense intent via Claude ──────────────────────────
+async function parseExpense(userId, text) {
+  const prompt = `Extract expense details from: "${text}"
+
+Categories: Food & Dining, Groceries, Transport, Utilities, Entertainment, Health, Shopping, Other
+
+Reply with ONLY a JSON object, no explanation, no markdown:
+{
+  "amount": 14.00,
+  "category": "Food & Dining",
+  "description": "lunch at food court"
+}
+
+If no valid amount found, set amount to null.`;
+
+  try {
+    const response = await chat(userId, prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (error) {
+    logger.error(`Expense parse failed: ${error.message}`);
     return null;
   }
 }
@@ -62,6 +91,11 @@ async function handleCommand(command, userId, userName, text, reply) {
     case '/reminders':
       const reminders = getUserReminders(userId);
       return reply(formatReminders(reminders));
+
+    case '/expenses':
+      const summary = getMonthlySummary(userId);
+      const total = getMonthlyTotal(userId);
+      return reply(formatSummary(summary, total));
 
     case '/adduser':
       if (!isAdmin(userId)) return reply('❌ Admin only.');
@@ -108,6 +142,21 @@ async function handleMessage(ctx) {
       return reply(`✅ Reminder set!\n📝 ${parsed.task}\n📅 ${date}${parsed.recurring ? '\n🔁 ' + parsed.recurring : ''}`);
     }
     return reply('⚠️ I couldn\'t figure out the date/time. Try: "remind me Friday 6pm dentist"');
+  }
+
+  // Detect expense intent
+  const isExpense = lower.includes('spent') ||
+    lower.includes('paid') ||
+    lower.includes('bought') ||
+    lower.includes('purchased') ||
+    lower.includes('cost me');
+
+  if (isExpense) {
+    const parsed = await parseExpense(userId, text);
+    if (parsed && parsed.amount) {
+      saveExpense(userId, parsed.amount, parsed.category, parsed.description);
+      return reply(`✅ Logged!\n💸 $${parsed.amount.toFixed(2)} — ${parsed.category}\n📝 ${parsed.description}`);
+    }
   }
 
   // Everything else goes to Claude
