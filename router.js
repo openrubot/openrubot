@@ -3,6 +3,7 @@ const { isAuthorised, isAdmin, addUser, clearHistory, getUser } = require('./mem
 const { saveReminder, getUserReminders, formatReminders } = require('./tools/reminders.js');
 const logger = require('./security/logger.js');
 const { saveExpense, getMonthlySummary, getMonthlyTotal, formatSummary } = require('./tools/expenses.js');
+const { saveHealth, getWeeklyHealth, formatWeeklySummary } = require('./tools/health.js');
 
 const ADMIN_ID = process.env.ADMIN_TELEGRAM_ID;
 
@@ -60,6 +61,29 @@ If no valid amount found, set amount to null.`;
   }
 }
 
+// ── Parse health intent via Claude ────────────────────────────
+async function parseHealth(userId, text) {
+  const prompt = `Extract health log entries from: "${text}"
+
+Reply with ONLY a JSON array of entries, no explanation, no markdown:
+[
+  { "type": "sleep", "value": "7" },
+  { "type": "water", "value": "2.5" }
+]
+
+Types: sleep (hours), water (litres), gym (duration e.g. "45 min"), workout (description), calories (kcal)
+Extract ALL health entries mentioned. If none found, return empty array [].`;
+
+  try {
+    const response = await chat(userId, prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (error) {
+    logger.error(`Health parse failed: ${error.message}`);
+    return [];
+  }
+}
+
 // ── Slash command handler ─────────────────────────────────────
 async function handleCommand(command, userId, userName, text, reply) {
   switch (command) {
@@ -96,6 +120,10 @@ async function handleCommand(command, userId, userName, text, reply) {
       const summary = getMonthlySummary(userId);
       const total = getMonthlyTotal(userId);
       return reply(formatSummary(summary, total));
+
+    case '/health':
+      const healthEntries = getWeeklyHealth(userId);
+      return reply(formatWeeklySummary(healthEntries));
 
     case '/adduser':
       if (!isAdmin(userId)) return reply('❌ Admin only.');
@@ -156,6 +184,29 @@ async function handleMessage(ctx) {
     if (parsed && parsed.amount) {
       saveExpense(userId, parsed.amount, parsed.category, parsed.description);
       return reply(`✅ Logged!\n💸 $${parsed.amount.toFixed(2)} — ${parsed.category}\n📝 ${parsed.description}`);
+    }
+  }
+  
+  // Detect health intent
+  const isHealth = lower.includes('sleep') ||
+    lower.includes('water') ||
+    lower.includes('gym') ||
+    lower.includes('workout') ||
+    lower.includes('log ') ||
+    lower.includes('calories') ||
+    lower.includes('ran') ||
+    lower.includes('walked');
+
+  if (isHealth) {
+    const entries = await parseHealth(userId, text);
+    if (entries.length > 0) {
+      entries.forEach(e => saveHealth(userId, e.type, e.value));
+      const lines = entries.map(e => {
+        const icons = { sleep: '😴', water: '💧', gym: '🏋️', workout: '💪', calories: '🔥' };
+        const units = { sleep: 'hrs', water: 'L', gym: '', workout: '', calories: 'kcal' };
+        return `${icons[e.type] || '📝'} ${e.type}: ${e.value}${units[e.type] || ''}`;
+      });
+      return reply(`✅ Health logged!\n\n${lines.join('\n')}`);
     }
   }
 
