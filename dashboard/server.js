@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDueReminders, markDone, getUserReminders } = require('../tools/reminders.js');
 const logger = require('../security/logger.js');
+const { composeBriefing } = require('../briefing/morning.js');
 
 const app = express();
 app.use(express.json());
@@ -48,5 +49,16 @@ function startAPI() {
     logger.info(`🌐 Internal API running on port ${port}`);
   });
 }
+
+// ── GET /api/briefing/:userId — compose morning briefing ──────
+app.get('/api/briefing/:userId', async (req, res) => {
+  try {
+    const briefing = await composeBriefing(req.params.userId);
+    res.json({ briefing });
+  } catch (error) {
+    logger.error(`Briefing error: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = { startAPI };

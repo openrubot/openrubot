@@ -1,3 +1,4 @@
+const { executeCommand } = require('./tools/govee.js');
 const { chat } = require('./claude.js');
 const { isAuthorised, isAdmin, addUser, clearHistory, getUser } = require('./memory.js');
 const { saveReminder, getUserReminders, formatReminders } = require('./tools/reminders.js');
@@ -81,6 +82,39 @@ Extract ALL health entries mentioned. If none found, return empty array [].`;
   } catch (error) {
     logger.error(`Health parse failed: ${error.message}`);
     return [];
+  }
+}
+
+// Parse Govee Lighting
+async function parseLight(userId, text) {
+  const prompt = `Extract smart light command from: "${text}"
+
+The lamp has 15 segments (0-14). Top half = segments 0-7, bottom half = segments 8-14.
+
+Reply with ONLY a JSON object, no explanation, no markdown:
+{
+  "power": "on" or "off" or null,
+  "color": "blue" or "warm white" or null,
+  "brightness": 50 or null,
+  "colorTemp": 3000 or null,
+  "segments": [0,1,2] or null,
+  "musicMode": "rhythm" or null
+}
+
+Rules:
+- If user mentions specific parts (top, bottom, segments), set segments array
+- If user says "music mode" or specific mode name, set musicMode
+- For warm/cool white, use colorTemp instead of color (2700=warm, 6500=cool)
+- If just turning off, only set power
+- Set null for anything not mentioned`;
+
+  try {
+    const response = await chat(userId, prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (error) {
+    logger.error(`Light parse failed: ${error.message}`);
+    return null;
   }
 }
 
@@ -207,6 +241,44 @@ async function handleMessage(ctx) {
         return `${icons[e.type] || '📝'} ${e.type}: ${e.value}${units[e.type] || ''}`;
       });
       return reply(`✅ Health logged!\n\n${lines.join('\n')}`);
+    }
+  }
+
+  // Detect light intent
+  const isLight = lower.includes('lamp') ||
+    lower.includes('light') ||
+    lower.includes('turn on') ||
+    lower.includes('turn off') ||
+    lower.includes('dim') ||
+    lower.includes('bright') ||
+    lower.includes('music mode');
+
+  if (isLight) {
+    const parsed = await parseLight(userId, text);
+    if (parsed && (parsed.power || parsed.color || parsed.brightness || parsed.colorTemp || parsed.musicMode)) {
+      await executeCommand(parsed);
+
+      // Build a friendly human response
+      let msg = '';
+      if (parsed.power === 'on')  msg = '💡 Lamp is on!';
+      if (parsed.power === 'off') msg = '🌑 Lamp is off. Goodnight!';
+
+      if (parsed.color && parsed.brightness)
+        msg = `💡 Done! Lamp set to *${parsed.color}* at *${parsed.brightness}%* brightness.`;
+      else if (parsed.color)
+        msg = `🎨 Lamp colour changed to *${parsed.color}*!`;
+      else if (parsed.brightness)
+        msg = `💡 Brightness set to *${parsed.brightness}%*.`;
+      else if (parsed.colorTemp)
+        msg = `🌡️ Colour temperature set to *${parsed.colorTemp}K* — ${parsed.colorTemp < 4000 ? 'nice and warm 🕯️' : 'bright and cool ❄️'}`;
+      else if (parsed.musicMode)
+        msg = `🎵 Music mode activated — *${parsed.musicMode}*! Enjoy the vibes.`;
+      else if (parsed.segments)
+        msg = `✨ Segments updated!`;
+
+      if (!msg) msg = '💡 Done!';
+
+      return reply(msg);
     }
   }
 
